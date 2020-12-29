@@ -47,9 +47,31 @@ pub enum Event {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ParseResult {
-    Running,
-    Success,
-    Failure,
+    Running {
+        start_log_index: usize,
+    },
+    Success {
+        start_log_index: usize,
+        end_log_index: usize,
+    },
+    Failure {
+        start_log_index: usize,
+        end_log_index: usize,
+    },
+}
+
+impl ParseResult {
+    fn start_log_index(&self) -> usize {
+        match self {
+            ParseResult::Running { start_log_index }
+            | ParseResult::Success {
+                start_log_index, ..
+            }
+            | ParseResult::Failure {
+                start_log_index, ..
+            } => *start_log_index,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -60,18 +82,75 @@ pub struct Emitter {
 
 impl Emitter {
     fn start(&mut self, id: u16, position: usize) {
-        self.memo.insert((id, position), ParseResult::Running);
+        let start_log_index = self.log.len();
+        self.memo
+            .insert((id, position), ParseResult::Running { start_log_index });
         self.log.push(Event::Start { id, position });
     }
 
     fn commit(&mut self, id: u16, position: usize) {
-        *self.memo.get_mut(&(id, position)).unwrap() = ParseResult::Success;
+        let memo = self.memo.get_mut(&(id, position)).unwrap();
+        let end_log_index = self.log.len();
+        *memo = ParseResult::Success {
+            start_log_index: memo.start_log_index(),
+            end_log_index,
+        };
         self.log.push(Event::Commit);
     }
 
     fn abort(&mut self, id: u16, position: usize) {
-        *self.memo.get_mut(&(id, position)).unwrap() = ParseResult::Failure;
+        let memo = self.memo.get_mut(&(id, position)).unwrap();
+        let end_log_index = self.log.len();
+        *memo = ParseResult::Failure {
+            start_log_index: memo.start_log_index(),
+            end_log_index,
+        };
         self.log.push(Event::Abort);
+    }
+
+    fn tree_at(&self, start_log_index: usize, end_log_index: usize) -> rowan::GreenNode {
+        use rowan::*;
+
+        let mut builder = GreenNodeBuilder::new();
+        let mut index = start_log_index;
+
+        while index <= end_log_index {
+            match &self.log[index] {
+                Event::Start { id, position } => match *self.memo.get(&(*id, *position)).unwrap() {
+                    ParseResult::Success { .. } => {
+                        builder.start_node(SyntaxKind(*id));
+                        index += 1;
+                    }
+                    ParseResult::Failure { end_log_index, .. } => {
+                        index = end_log_index;
+                    }
+                    ParseResult::Running { .. } => unreachable!(),
+                },
+                Event::Consume { text } => {
+                    // TODO: proper SyntaxKind
+                    builder.token(SyntaxKind(u16::MAX), text.clone());
+                    index += 1;
+                }
+                Event::Commit => {
+                    builder.finish_node();
+                    index += 1;
+                }
+                Event::Abort => unreachable!(),
+            }
+        }
+
+        builder.finish()
+    }
+
+    pub fn tree(&self, id: u16, position: usize) -> rowan::GreenNode {
+        let result = self.memo.get(&(id, position)).unwrap();
+        match *result {
+            ParseResult::Success {
+                start_log_index,
+                end_log_index,
+            } => self.tree_at(start_log_index, end_log_index),
+            _ => todo!(),
+        }
     }
 }
 
