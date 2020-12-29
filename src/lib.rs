@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 #[derive(Debug, Clone, Copy)]
 pub struct Input<'a> {
     input: &'a str,
@@ -22,15 +24,14 @@ impl<'a> Input<'a> {
     }
 
     pub fn parse<P: Parser>(&mut self, emitter: &mut Emitter) -> bool {
-        emitter.log.push(Event::Start {
-            id: P::ID,
-            position: self.position,
-        });
+        let id = P::ID;
+        let position = self.position;
+        emitter.start(id, position);
         let result = P::parse(self, emitter);
         if result {
-            emitter.log.push(Event::Commit);
+            emitter.commit(id, position);
         } else {
-            emitter.log.push(Event::Abort);
+            emitter.abort(id, position);
         }
         result
     }
@@ -44,9 +45,34 @@ pub enum Event {
     Abort,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ParseResult {
+    Running,
+    Success,
+    Failure,
+}
+
 #[derive(Debug, Default)]
 pub struct Emitter {
     log: Vec<Event>,
+    memo: HashMap<(u16, usize), ParseResult>,
+}
+
+impl Emitter {
+    fn start(&mut self, id: u16, position: usize) {
+        self.memo.insert((id, position), ParseResult::Running);
+        self.log.push(Event::Start { id, position });
+    }
+
+    fn commit(&mut self, id: u16, position: usize) {
+        *self.memo.get_mut(&(id, position)).unwrap() = ParseResult::Success;
+        self.log.push(Event::Commit);
+    }
+
+    fn abort(&mut self, id: u16, position: usize) {
+        *self.memo.get_mut(&(id, position)).unwrap() = ParseResult::Failure;
+        self.log.push(Event::Abort);
+    }
 }
 
 pub trait Parser {
