@@ -23,17 +23,43 @@ impl<'a> Input<'a> {
         }
     }
 
+    pub fn clause<F>(
+        &mut self,
+        emitter: &mut Emitter,
+        kind: rowan::SyntaxKind,
+        clause_id: u16,
+        parser: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Input<'_>, &mut Emitter) -> bool,
+    {
+        let backtrack = *self;
+
+        let position = self.position;
+        emitter.start(kind, clause_id, position);
+        let result = parser(self, emitter);
+        if result {
+            emitter.commit(kind, clause_id, position);
+        } else {
+            emitter.abort(kind, clause_id, position);
+            *self = backtrack;
+        }
+        result
+    }
+
     pub fn parse<P: Parser>(&mut self, emitter: &mut Emitter) -> bool {
         use rowan::Language;
 
-        let id = P::Language::kind_to_raw(P::KIND);
+        let kind = P::Language::kind_to_raw(P::KIND);
+        let clause_id = 0; // special clause id
         let position = self.position;
-        emitter.start(id, position);
+
+        emitter.start(kind, clause_id, position);
         let result = P::parse(self, emitter);
         if result {
-            emitter.commit(id, position);
+            emitter.commit(kind, clause_id, position);
         } else {
-            emitter.abort(id, position);
+            emitter.abort(kind, clause_id, position);
         }
         result
     }
@@ -42,7 +68,8 @@ impl<'a> Input<'a> {
 #[derive(Debug)]
 pub enum Event {
     Start {
-        id: rowan::SyntaxKind,
+        kind: rowan::SyntaxKind,
+        clause_id: u16,
         position: usize,
     },
     Consume {
@@ -84,19 +111,25 @@ impl ParseResult {
 #[derive(Debug, Default)]
 pub struct Emitter {
     log: Vec<Event>,
-    memo: HashMap<(rowan::SyntaxKind, usize), ParseResult>,
+    memo: HashMap<(rowan::SyntaxKind, u16, usize), ParseResult>,
 }
 
 impl Emitter {
-    fn start(&mut self, id: rowan::SyntaxKind, position: usize) {
+    fn start(&mut self, kind: rowan::SyntaxKind, clause_id: u16, position: usize) {
         let start_log_index = self.log.len();
-        self.memo
-            .insert((id, position), ParseResult::Running { start_log_index });
-        self.log.push(Event::Start { id, position });
+        self.memo.insert(
+            (kind, clause_id, position),
+            ParseResult::Running { start_log_index },
+        );
+        self.log.push(Event::Start {
+            kind,
+            clause_id,
+            position,
+        });
     }
 
-    fn commit(&mut self, id: rowan::SyntaxKind, position: usize) {
-        let memo = self.memo.get_mut(&(id, position)).unwrap();
+    fn commit(&mut self, kind: rowan::SyntaxKind, clause_id: u16, position: usize) {
+        let memo = self.memo.get_mut(&(kind, clause_id, position)).unwrap();
         let end_log_index = self.log.len();
         *memo = ParseResult::Success {
             start_log_index: memo.start_log_index(),
@@ -105,8 +138,8 @@ impl Emitter {
         self.log.push(Event::Commit);
     }
 
-    fn abort(&mut self, id: rowan::SyntaxKind, position: usize) {
-        let memo = self.memo.get_mut(&(id, position)).unwrap();
+    fn abort(&mut self, kind: rowan::SyntaxKind, clause_id: u16, position: usize) {
+        let memo = self.memo.get_mut(&(kind, clause_id, position)).unwrap();
         let end_log_index = self.log.len();
         *memo = ParseResult::Failure {
             start_log_index: memo.start_log_index(),
@@ -127,9 +160,13 @@ impl Emitter {
 
         while index <= end_log_index {
             match &self.log[index] {
-                Event::Start { id, position } => match *self.memo.get(&(*id, *position)).unwrap() {
+                Event::Start {
+                    kind,
+                    clause_id,
+                    position,
+                } => match *self.memo.get(&(*kind, *clause_id, *position)).unwrap() {
                     ParseResult::Success { .. } => {
-                        builder.start_node(*id);
+                        builder.start_node(*kind);
                         index += 1;
                     }
                     ParseResult::Failure { end_log_index, .. } => {
@@ -158,7 +195,7 @@ impl Emitter {
 
         let result = self
             .memo
-            .get(&(P::Language::kind_to_raw(P::KIND), position))
+            .get(&(P::Language::kind_to_raw(P::KIND), 0, position))
             .unwrap();
         match *result {
             ParseResult::Success {
