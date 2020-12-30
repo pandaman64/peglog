@@ -133,7 +133,7 @@ impl Emitter {
                         index += 1;
                     }
                     ParseResult::Failure { end_log_index, .. } => {
-                        index = end_log_index;
+                        index = end_log_index + 1;
                     }
                     ParseResult::Running { .. } => unreachable!(),
                 },
@@ -153,10 +153,7 @@ impl Emitter {
         builder.finish()
     }
 
-    pub fn green_tree<P: Parser>(
-        &self,
-        position: usize,
-    ) -> rowan::GreenNode {
+    pub fn green_tree<P: Parser>(&self, position: usize) -> rowan::GreenNode {
         use rowan::Language;
 
         let result = self
@@ -172,10 +169,7 @@ impl Emitter {
         }
     }
 
-    pub fn syntax_tree<P: Parser>(
-        &self,
-        position: usize,
-    ) -> rowan::SyntaxNode<P::Language> {
+    pub fn syntax_tree<P: Parser>(&self, position: usize) -> rowan::SyntaxNode<P::Language> {
         rowan::SyntaxNode::new_root(self.green_tree::<P>(position))
     }
 }
