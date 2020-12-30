@@ -19,6 +19,8 @@ struct Grammar {
 }
 
 fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
+    use std::convert::TryInto;
+
     let rule_names: Vec<_> = grammar
         .rules
         .iter()
@@ -28,8 +30,11 @@ fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
         let mut bodies = Vec::with_capacity(grammar.rules.len());
 
         for rule in grammar.rules.iter() {
+            let name = proc_macro2::Ident::new(&rule.name, proc_macro2::Span::call_site());
+
             let mut body = quote! { false };
-            for clause in rule.clauses.iter() {
+            for (clause_id, clause) in (1..).zip(rule.clauses.iter()) {
+                let clause_id: u16 = clause_id.try_into().unwrap();
                 let mut part = quote! { true };
 
                 for phrase in clause.phrases.iter() {
@@ -48,13 +53,8 @@ fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
                 }
 
                 body.extend(quote! {
-                    || ({
-                        let backtrack = *input;
-                        let result = #part;
-                        if !result {
-                            *input = backtrack;
-                        }
-                        result
+                    || input.clause(emitter, <Language as rowan::Language>::kind_to_raw(SyntaxKind::#name), #clause_id, |input, emitter| {
+                        #part
                     })
                 });
             }
@@ -66,7 +66,6 @@ fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
     };
     let raw_kinds: Vec<_> = (1..=grammar.rules.len())
         .map(|i| {
-            use std::convert::TryInto;
             let i: u16 = i.try_into().unwrap();
             quote! { #i }
         })

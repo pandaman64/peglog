@@ -148,46 +148,48 @@ impl Emitter {
         self.log.push(Event::Abort);
     }
 
-    fn tree_at<L: Language>(
+    fn tree_between(
         &self,
+        builder: &mut rowan::GreenNodeBuilder,
         start_log_index: usize,
         end_log_index: usize,
-    ) -> rowan::GreenNode {
-        use rowan::*;
-
-        let mut builder = GreenNodeBuilder::new();
-        let mut index = start_log_index;
-
-        while index <= end_log_index {
-            match &self.log[index] {
-                Event::Start {
-                    kind,
-                    clause_id,
-                    position,
-                } => match *self.memo.get(&(*kind, *clause_id, *position)).unwrap() {
-                    ParseResult::Success { .. } => {
-                        builder.start_node(*kind);
-                        index += 1;
-                    }
-                    ParseResult::Failure { end_log_index, .. } => {
-                        index = end_log_index + 1;
-                    }
-                    ParseResult::Running { .. } => unreachable!(),
-                },
-                Event::Consume { text } => {
-                    // TODO: proper SyntaxKind
-                    builder.token(L::kind_to_raw(L::TOKEN), text.clone());
-                    index += 1;
-                }
-                Event::Commit => {
-                    builder.finish_node();
-                    index += 1;
-                }
-                Event::Abort => unreachable!(),
-            }
+        token_kind: rowan::SyntaxKind,
+    ) {
+        if start_log_index >= end_log_index {
+            return;
         }
 
-        builder.finish()
+        match &self.log[start_log_index] {
+            Event::Start {
+                kind,
+                clause_id,
+                position,
+            } => match *self.memo.get(&(*kind, *clause_id, *position)).unwrap() {
+                ParseResult::Success {
+                    end_log_index: child_end,
+                    ..
+                } => {
+                    if *clause_id == 0 {
+                        builder.start_node(*kind);
+                    }
+                    self.tree_between(builder, start_log_index + 1, child_end, token_kind);
+                    if *clause_id == 0 {
+                        builder.finish_node();
+                    }
+                    self.tree_between(builder, child_end + 1, end_log_index, token_kind)
+                }
+                ParseResult::Failure {
+                    end_log_index: child_end,
+                    ..
+                } => self.tree_between(builder, child_end + 1, end_log_index, token_kind),
+                ParseResult::Running { .. } => unreachable!(),
+            },
+            Event::Consume { text } => {
+                builder.token(token_kind, text.clone());
+                self.tree_between(builder, start_log_index + 1, end_log_index, token_kind)
+            }
+            _ => unreachable!(),
+        }
     }
 
     pub fn green_tree<P: Parser>(&self, position: usize) -> rowan::GreenNode {
@@ -201,7 +203,16 @@ impl Emitter {
             ParseResult::Success {
                 start_log_index,
                 end_log_index,
-            } => self.tree_at::<P::Language>(start_log_index, end_log_index),
+            } => {
+                let mut builder = rowan::GreenNodeBuilder::new();
+                self.tree_between(
+                    &mut builder,
+                    start_log_index,
+                    end_log_index,
+                    P::Language::kind_to_raw(P::Language::TOKEN),
+                );
+                builder.finish()
+            }
             _ => todo!(),
         }
     }
