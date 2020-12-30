@@ -117,74 +117,31 @@ fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
 }
 
 fn main() {
-    // 0: T = "a" | "b" T
-    // let grammar = Grammar {
-    //     rules: vec![Rule {
-    //         name: "T".into(),
-    //         clauses: vec![
-    //             Clause {
-    //                 phrases: vec![Phrase::Terminal("a".into())],
-    //             },
-    //             Clause {
-    //                 phrases: vec![
-    //                     Phrase::Terminal("b".into()),
-    //                     Phrase::Nonterminal("T".into()),
-    //                 ],
-    //             },
-    //         ],
-    //     }],
-    // };
-
     // https://www.slideshare.net/chiguri/pegexpression
     // S = "a" S "a" | "b" S "b" | ""
-    // or, equivalently
-    // S = Sa | Sb | Empty
-    // Sa = "a" S "a"
-    // Sb = "b" Sb "b"
-    // Empty = ""
     let grammar = Grammar {
-        rules: vec![
-            Rule {
-                name: "S".into(),
-                clauses: vec![
-                    Clause {
-                        phrases: vec![Phrase::Nonterminal("Sa".into())],
-                    },
-                    Clause {
-                        phrases: vec![Phrase::Nonterminal("Sb".into())],
-                    },
-                    Clause {
-                        phrases: vec![Phrase::Nonterminal("Empty".into())],
-                    },
-                ],
-            },
-            Rule {
-                name: "Sa".into(),
-                clauses: vec![Clause {
+        rules: vec![Rule {
+            name: "S".into(),
+            clauses: vec![
+                Clause {
                     phrases: vec![
                         Phrase::Terminal("a".into()),
                         Phrase::Nonterminal("S".into()),
                         Phrase::Terminal("a".into()),
                     ],
-                }],
-            },
-            Rule {
-                name: "Sb".into(),
-                clauses: vec![Clause {
+                },
+                Clause {
                     phrases: vec![
                         Phrase::Terminal("b".into()),
                         Phrase::Nonterminal("S".into()),
                         Phrase::Terminal("b".into()),
                     ],
-                }],
-            },
-            Rule {
-                name: "Empty".into(),
-                clauses: vec![Clause {
+                },
+                Clause {
                     phrases: vec![Phrase::Terminal("".into())],
-                }],
-            },
-        ],
+                },
+            ],
+        }],
     };
 
     println!("{}", generate(&grammar));

@@ -23,7 +23,7 @@ fn print(indent: usize, element: rowan::SyntaxElement<Language>) {
 fn main() {
     let mut emitter = Emitter::default();
     // println!("{}", Input::new("abbaabba").parse::<S>(&mut emitter));
-    println!("{}", Input::new("aabbaa").parse::<S>(&mut emitter));
+    println!("{}", Input::new("abbaabba").parse::<S>(&mut emitter));
     println!("{:?}", emitter);
     println!("{:?}", emitter.green_tree::<S>(0));
     print(0, emitter.syntax_tree::<S>(0).into());
