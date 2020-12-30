@@ -24,7 +24,9 @@ impl<'a> Input<'a> {
     }
 
     pub fn parse<P: Parser>(&mut self, emitter: &mut Emitter) -> bool {
-        let id = P::ID;
+        use rowan::Language;
+
+        let id = P::Language::kind_to_raw(P::KIND);
         let position = self.position;
         emitter.start(id, position);
         let result = P::parse(self, emitter);
@@ -39,8 +41,13 @@ impl<'a> Input<'a> {
 
 #[derive(Debug)]
 pub enum Event {
-    Start { id: u16, position: usize },
-    Consume { text: rowan::SmolStr },
+    Start {
+        id: rowan::SyntaxKind,
+        position: usize,
+    },
+    Consume {
+        text: rowan::SmolStr,
+    },
     Commit,
     Abort,
 }
@@ -77,18 +84,18 @@ impl ParseResult {
 #[derive(Debug, Default)]
 pub struct Emitter {
     log: Vec<Event>,
-    memo: HashMap<(u16, usize), ParseResult>,
+    memo: HashMap<(rowan::SyntaxKind, usize), ParseResult>,
 }
 
 impl Emitter {
-    fn start(&mut self, id: u16, position: usize) {
+    fn start(&mut self, id: rowan::SyntaxKind, position: usize) {
         let start_log_index = self.log.len();
         self.memo
             .insert((id, position), ParseResult::Running { start_log_index });
         self.log.push(Event::Start { id, position });
     }
 
-    fn commit(&mut self, id: u16, position: usize) {
+    fn commit(&mut self, id: rowan::SyntaxKind, position: usize) {
         let memo = self.memo.get_mut(&(id, position)).unwrap();
         let end_log_index = self.log.len();
         *memo = ParseResult::Success {
@@ -98,7 +105,7 @@ impl Emitter {
         self.log.push(Event::Commit);
     }
 
-    fn abort(&mut self, id: u16, position: usize) {
+    fn abort(&mut self, id: rowan::SyntaxKind, position: usize) {
         let memo = self.memo.get_mut(&(id, position)).unwrap();
         let end_log_index = self.log.len();
         *memo = ParseResult::Failure {
@@ -108,7 +115,11 @@ impl Emitter {
         self.log.push(Event::Abort);
     }
 
-    fn tree_at(&self, start_log_index: usize, end_log_index: usize) -> rowan::GreenNode {
+    fn tree_at<L: Language>(
+        &self,
+        start_log_index: usize,
+        end_log_index: usize,
+    ) -> rowan::GreenNode {
         use rowan::*;
 
         let mut builder = GreenNodeBuilder::new();
@@ -118,7 +129,7 @@ impl Emitter {
             match &self.log[index] {
                 Event::Start { id, position } => match *self.memo.get(&(*id, *position)).unwrap() {
                     ParseResult::Success { .. } => {
-                        builder.start_node(SyntaxKind(*id));
+                        builder.start_node(*id);
                         index += 1;
                     }
                     ParseResult::Failure { end_log_index, .. } => {
@@ -128,7 +139,7 @@ impl Emitter {
                 },
                 Event::Consume { text } => {
                     // TODO: proper SyntaxKind
-                    builder.token(SyntaxKind(u16::MAX), text.clone());
+                    builder.token(L::kind_to_raw(L::TOKEN), text.clone());
                     index += 1;
                 }
                 Event::Commit => {
@@ -142,20 +153,40 @@ impl Emitter {
         builder.finish()
     }
 
-    pub fn tree(&self, id: u16, position: usize) -> rowan::GreenNode {
-        let result = self.memo.get(&(id, position)).unwrap();
+    pub fn green_tree<P: Parser>(
+        &self,
+        position: usize,
+    ) -> rowan::GreenNode {
+        use rowan::Language;
+
+        let result = self
+            .memo
+            .get(&(P::Language::kind_to_raw(P::KIND), position))
+            .unwrap();
         match *result {
             ParseResult::Success {
                 start_log_index,
                 end_log_index,
-            } => self.tree_at(start_log_index, end_log_index),
+            } => self.tree_at::<P::Language>(start_log_index, end_log_index),
             _ => todo!(),
         }
     }
+
+    pub fn syntax_tree<P: Parser>(
+        &self,
+        position: usize,
+    ) -> rowan::SyntaxNode<P::Language> {
+        rowan::SyntaxNode::new_root(self.green_tree::<P>(position))
+    }
+}
+
+pub trait Language: rowan::Language {
+    const TOKEN: Self::Kind;
 }
 
 pub trait Parser {
-    const ID: u16;
+    type Language: Language;
+    const KIND: <Self::Language as rowan::Language>::Kind;
 
     fn parse(input: &mut Input<'_>, emitter: &mut Emitter) -> bool;
 }

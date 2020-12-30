@@ -1,11 +1,28 @@
-use peglog::{Emitter, Input, Parser};
+use peglog::{Emitter, Input};
 
 mod parser;
 use parser::*;
+
+// https://github.com/rust-analyzer/rowan/blob/5cf7c244f55b57777a1cc3190f90b04794985900/examples/math.rs#L113
+fn print(indent: usize, element: rowan::SyntaxElement<Language>) {
+    let kind: SyntaxKind = element.kind().into();
+    print!("{:indent$}", "", indent = indent);
+    match element {
+        rowan::SyntaxElement::Node(node) => {
+            println!("- {:?}", kind);
+            for child in node.children_with_tokens() {
+                print(indent + 2, child);
+            }
+        }
+
+        rowan::SyntaxElement::Token(token) => println!("- {:?} {:?}", token.text(), kind),
+    }
+}
 
 fn main() {
     let mut emitter = Emitter::default();
     println!("{}", Input::new("bbbbba").parse::<T>(&mut emitter));
     println!("{:?}", emitter);
-    println!("{:?}", emitter.tree(T::ID, 0));
+    println!("{:?}", emitter.green_tree::<T>(0));
+    print(0, emitter.syntax_tree::<T>(0).into());
 }

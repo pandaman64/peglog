@@ -19,58 +19,102 @@ struct Grammar {
 }
 
 fn generate(grammar: &Grammar) -> proc_macro2::TokenStream {
-    use std::convert::TryInto;
+    let rule_names: Vec<_> = grammar
+        .rules
+        .iter()
+        .map(|rule| proc_macro2::Ident::new(&rule.name, proc_macro2::Span::call_site()))
+        .collect();
+    let bodies: Vec<_> = {
+        let mut bodies = Vec::with_capacity(grammar.rules.len());
 
-    let mut ret = quote! {
-        use peglog::{Emitter, Input, Parser};
-    };
+        for rule in grammar.rules.iter() {
+            let mut body = quote! { false };
+            for clause in rule.clauses.iter() {
+                let mut part = quote! { true };
 
-    for (id, rule) in grammar.rules.iter().enumerate() {
-        let id: u16 = id.try_into().unwrap();
-        let name = proc_macro2::Ident::new(&rule.name, proc_macro2::Span::call_site());
-        let mut body = quote! { false };
-        for clause in rule.clauses.iter() {
-            let mut part = quote! { true };
-
-            for phrase in clause.phrases.iter() {
-                part.extend(match phrase {
-                    Phrase::Terminal(s) => quote! {
-                        && input.consume(#s, emitter)
-                    },
-                    Phrase::Nonterminal(name) => {
-                        let parser = proc_macro2::Ident::new(name, proc_macro2::Span::call_site());
-                        quote! {
-                            && input.parse::<#parser>(emitter)
+                for phrase in clause.phrases.iter() {
+                    part.extend(match phrase {
+                        Phrase::Terminal(s) => quote! {
+                            && input.consume(#s, emitter)
+                        },
+                        Phrase::Nonterminal(name) => {
+                            let parser =
+                                proc_macro2::Ident::new(name, proc_macro2::Span::call_site());
+                            quote! {
+                                && input.parse::<#parser>(emitter)
+                            }
                         }
-                    }
+                    });
+                }
+
+                body.extend(quote! {
+                    || ({
+                        let backtrack = *input;
+                        let result = #part;
+                        if !result {
+                            *input = backtrack;
+                        }
+                        result
+                    })
                 });
             }
 
-            body.extend(quote! {
-                || ({
-                    let backtrack = *input;
-                    let result = #part;
-                    if !result {
-                        *input = backtrack;
-                    }
-                    result
-                })
-            });
+            bodies.push(body);
         }
 
-        ret.extend(quote! {
-            pub struct #name;
-            impl Parser for #name {
-                const ID: u16 = #id;
+        bodies
+    };
+    let raw_kinds: Vec<_> = (1..=grammar.rules.len())
+        .map(|i| {
+            use std::convert::TryInto;
+            let i: u16 = i.try_into().unwrap();
+            quote! { #i }
+        })
+        .collect();
 
-                fn parse(input: &mut Input<'_>, emitter: &mut Emitter) -> bool {
-                    #body
+    quote! {
+        use peglog::{Emitter, Input, Parser};
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum SyntaxKind {
+            Token,
+            #(#rule_names,)*
+        }
+
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct Language;
+        impl rowan::Language for Language {
+            type Kind = SyntaxKind;
+            fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
+                match raw.0 {
+                    0 => SyntaxKind::Token,
+                    #(#raw_kinds => SyntaxKind::#rule_names,)*
+                    _ => unreachable!(),
                 }
             }
-        });
-    }
+            fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
+                rowan::SyntaxKind(match kind {
+                    SyntaxKind::Token => 0,
+                    #(SyntaxKind::#rule_names => #raw_kinds,)*
+                })
+            }
+        }
+        impl peglog::Language for Language {
+            const TOKEN: Self::Kind = SyntaxKind::Token;
+        }
 
-    ret
+        #(
+        pub struct #rule_names;
+        impl Parser for #rule_names {
+            type Language = Language;
+            const KIND: SyntaxKind = SyntaxKind::#rule_names;
+
+            fn parse(input: &mut Input<'_>, emitter: &mut Emitter) -> bool {
+                #bodies
+            }
+        }
+        )*
+    }
 }
 
 fn main() {
